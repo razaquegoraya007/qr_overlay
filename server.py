@@ -1,44 +1,33 @@
-from flask import Flask, request, jsonify
+from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
-from flask_cors import CORS
+import qrcode
+import base64
+from io import BytesIO
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
 socketio = SocketIO(app)
 
-# Endpoint to handle QR code data via POST requests
-@app.route('/qr', methods=['POST'])
-def receive_qr_code():
-    data = request.json.get('qr_code', None)
-    if data:
-        print(f"Received QR Code Data: {data}")
-        socketio.emit('qr_code_received', {'data': data})
-        return jsonify({"status": "success", "data": data}), 200
-    else:
-        return jsonify({"status": "error", "message": "No QR code data received"}), 400
-
-# Serve the website displaying QR codes
+# Serve the webpage
 @app.route('/')
 def index():
-    return '''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>QR Code Scanner</title>
-        <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
-        <script type="text/javascript" charset="utf-8">
-            var socket = io.connect('http://' + document.domain + ':' + location.port);
-            socket.on('qr_code_received', function(data) {
-                document.getElementById('qr_code').innerText = 'Scanned QR Code: ' + data.data;
-            });
-        </script>
-    </head>
-    <body>
-        <h1>Real-Time QR Code Scanner</h1>
-        <p id="qr_code">Waiting for QR Code...</p>
-    </body>
-    </html>
-    '''
+    return render_template('index.html')
 
-if __name__ == "__main__":
+# Handle the event when a QR code is detected
+@socketio.on('qr_code_detected')
+def handle_qr_code(data):
+    qr_data = data['qr_data']
+    print(f"[DEBUG] QR Code received: {qr_data}")
+
+    # Generate a QR code image from the received QR code data
+    qr_img = qrcode.make(qr_data)
+
+    # Convert the image to a base64-encoded string
+    buffered = BytesIO()
+    qr_img.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+
+    # Broadcast the QR code image (base64) to all connected clients
+    socketio.emit('update_qr_code_image', {'qr_image': img_base64})
+
+if __name__ == '__main__':
     socketio.run(app, host='0.0.0.0', port=5000, debug=True)

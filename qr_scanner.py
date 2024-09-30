@@ -1,96 +1,76 @@
 import tkinter as tk
-import requests
-from pyzbar import pyzbar
-from PIL import ImageGrab  # To capture the screen
-import cv2
 import numpy as np
+import cv2
+from pyzbar import pyzbar
+from PIL import ImageGrab
+from threading import Thread
+import time
+import socketio
 
-# Function to send QR code data to the website
-def send_qr_data_to_website(data, url="http://127.0.0.1:5000/qr"):
-    payload = {'qr_code': data}
-    try:
-        print(f"[DEBUG] Sending POST request to {url} with payload: {payload}")
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            print(f"[INFO] Data sent successfully: {data}")
-        else:
-            print(f"[ERROR] Failed to send data. Server responded with: {response.status_code}")
-        return response.status_code
-    except Exception as e:
-        print(f"[ERROR] Error sending data: {e}")
-        return None
+# Set up the SocketIO client to communicate with the Flask server
+sio = socketio.Client()
 
-# Function to detect QR codes in the captured image
-def detect_qr_codes_in_image(image):
-    frame = np.array(image)  # Convert the PIL image to a NumPy array
-    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)  # Convert RGB to BGR for OpenCV
-
-    qr_codes = pyzbar.decode(frame)
-    print(f"[DEBUG] Detecting QR codes: Found {len(qr_codes)}")
-
-    if len(qr_codes) == 0:
-        print("[INFO] No QR codes detected. Make sure the QR code is visible and properly positioned.")
-    else:
-        for qr_code in qr_codes:
-            data = qr_code.data.decode("utf-8")
-            print(f"[INFO] QR Code detected: {data}")
-            send_qr_data_to_website(data)  # Send detected QR code to the server
-
-    return qr_codes
-
-# Function to capture a region of the screen
+# Function to capture the screen area under the overlay
 def capture_screen(overlay_position):
     x1, y1, x2, y2 = overlay_position
-    # Capture the area of the screen under the overlay window
-    image = ImageGrab.grab(bbox=(x1, y1, x2, y2))
-    return image
+    print(f"[DEBUG] Capturing screen area: ({x1}, {y1}, {x2}, {y2})")
+    image = ImageGrab.grab(bbox=(x1, y1, x2, y2))  # Capture the overlay area
+    frame = np.array(image)  # Convert to a NumPy array
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)  # Convert to OpenCV BGR format
+    return frame
 
-# Function to start the screen capture and QR detection
-def start_qr_detection(overlay_position):
+# Function to detect QR codes and send the detected QR code to the website
+def detect_qr_codes(frame):
+    gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
+    qr_codes = pyzbar.decode(gray_frame)  # Detect QR codes
+
+    if qr_codes:
+        print(f"[DEBUG] Detected QR Code(s): {len(qr_codes)}")
+        for qr_code in qr_codes:
+            qr_data = qr_code.data.decode('utf-8')
+            print(f"[DEBUG] QR Code data: {qr_data}")
+
+            # Send the detected QR code to the website via SocketIO
+            sio.emit('qr_code_detected', {'qr_data': qr_data})
+        return True
+    else:
+        print("[DEBUG] No QR code detected")
+        return False
+
+# Function to continuously capture and detect QR codes
+def start_scanning(root):
     while True:
-        # Capture the screen where the overlay is positioned
-        image = capture_screen(overlay_position)
+        x1 = root.winfo_rootx()
+        y1 = root.winfo_rooty()
+        x2 = x1 + root.winfo_width()
+        y2 = y1 + root.winfo_height()
 
-        # Display the captured image for debugging purposes
-        cv2.imshow("Captured Screen Area", np.array(image))
+        frame = capture_screen((x1, y1, x2, y2))  # Capture the screen area
+        detect_qr_codes(frame)  # Detect QR code and send data
 
-        # Detect QR codes in the captured image
-        detect_qr_codes_in_image(image)
+        time.sleep(1)  # Capture every second to avoid excessive CPU usage
 
-        # Press 'q' to exit
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cv2.destroyAllWindows()
-
-# Create a transparent overlay window
+# Create a purple overlay window
 def create_overlay():
     root = tk.Tk()
-    root.geometry("300x300")  # Initial window size
+    root.geometry("300x300")  # Size of overlay
     root.title("QR Code Scanner Overlay")
-
-    # Make window always on top and set opacity (alpha value)
+    root.configure(bg="purple")
     root.wm_attributes("-topmost", True)
-    root.wm_attributes("-alpha", 0.3)  # Set transparency (0.0 fully transparent to 1.0 fully opaque)
+    root.wm_attributes("-alpha", 0.3)  # Transparent
 
-    # Allow resizing and moving
-    root.resizable(True, True)
+    label = tk.Label(root, text="Move this overlay to scan QR code", bg='purple', fg='white')
+    label.pack()
 
-    # Instructions Label
-    label = tk.Label(root, text="Position this window over the QR code on your screen", bg='gray')
-    label.pack(anchor='center')
+    # Start scanning thread
+    scan_thread = Thread(target=start_scanning, args=(root,))
+    scan_thread.daemon = True  # Close when window closes
+    scan_thread.start()
 
-    def on_close():
-        # Get the position of the overlay window and pass it to the QR scanner
-        overlay_position = root.winfo_x(), root.winfo_y(), root.winfo_x() + root.winfo_width(), root.winfo_y() + root.winfo_height()
-        root.destroy()  # Close the overlay window
-        start_qr_detection(overlay_position)
-
-    # Trigger QR scanning when the overlay is closed
-    root.protocol("WM_DELETE_WINDOW", on_close)
-
-    # Start the overlay window loop
     root.mainloop()
 
 if __name__ == "__main__":
+    # Connect to the Flask server via SocketIO
+    sio.connect('http://127.0.0.1:5000')
+
     create_overlay()
