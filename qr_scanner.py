@@ -48,12 +48,12 @@ def start_scanning(root):
         frame = capture_screen((x1, y1, x2, y2))  # Capture the screen area
         detect_qr_codes(frame)  # Detect QR code and send data
 
-        time.sleep(1)  # Capture every second to avoid excessive CPU usage
+        time.sleep(0.001)
 
 # Create a purple overlay window
 def create_overlay():
     root = tk.Tk()
-    root.geometry("300x300")  # Size of overlay
+    root.geometry("400x400")  # Size of overlay
     root.title("QR Code Scanner Overlay")
     root.configure(bg="purple")
     root.wm_attributes("-topmost", True)
